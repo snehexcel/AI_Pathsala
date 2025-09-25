@@ -2,6 +2,7 @@ import dspy
 from pydantic import BaseModel, Field
 from chroma import qdrant
 import os
+from config import GOOGLE_API_KEY
 
 llm = dspy.LM("gemini/gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
 
