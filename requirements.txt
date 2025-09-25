@@ -148,6 +148,7 @@ pydantic-settings==2.10.1
 pydantic_core==2.33.2
 pydeck==0.9.1
 Pygments==2.19.2
+pypdf==5.9.0
 pyparsing==3.2.3
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
@@ -186,7 +187,7 @@ tiktoken==0.11.0
 tinycss2==1.4.0
 tokenizers==0.22.1
 toml==0.10.2
-torch>=2.2.0 
+torch==2.7.1
 tornado==6.5.1
 tqdm==4.67.1
 traitlets==5.14.3
