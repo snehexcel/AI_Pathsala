@@ -1,51 +1,37 @@
+import streamlit as st
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_qdrant import Qdrant
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.document_loaders.pdf import PyPDFLoader
-import glob
 import os
-from dotenv import load_dotenv
-load_dotenv()
-from config import QDRANT_API_KEY
 
+# --- 1. SECURE CONNECTION ---
+# This tries to grab keys from Streamlit Cloud Secrets first.
+# If that fails (local laptop), it looks for a .env file.
+try:
+    qdrant_url = st.secrets["QDRANT_URL"]
+    qdrant_api_key = st.secrets["QDRANT_API_KEY"]
+except:
+    from dotenv import load_dotenv
+    load_dotenv()
+    qdrant_url = os.getenv("QDRANT_URL")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY")
 
-# client = chromadb.PersistentClient(path = "Database")
-
-# collection = client.create_collection(
-#     name="Algorithm", 
-#     embedding_function=SentenceTransformerEmbeddingFunction()
-# )
-
+# --- 2. CONNECT TO CLIENT ---
+# Note: We do NOT use recreate_collection here. We just connect.
 qdrant_client = QdrantClient(
-    url="https://8ccafec5-9be1-4226-83cf-7aee6fd74a5c.eu-west-2-0.aws.cloud.qdrant.io:6333", 
-    api_key= QDRANT_API_KEY,
-)
-
-qdrant_client.recreate_collection(
-    collection_name="Content",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE),  # 384 is correct for MiniLM-L6-v2
+    url=qdrant_url,
+    api_key=qdrant_api_key,
 )
 
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Add to Qdrant
+# --- 3. CREATE VECTOR STORE OBJECT ---
+# This allows the rest of your app (rag.py, quiz.py) to query the DB
 qdrant = Qdrant(
     client=qdrant_client,
-    collection_name="Content",  # Match the created collection (table) name 
+    collection_name="Content", 
     embeddings=embeddings,
 )
 
-pdf_files = glob.glob("PDFs/*.pdf")
-
-for pdf_file in pdf_files:
-    documents = PyPDFLoader(file_path=pdf_file).load()
-    for i in range(len(documents)):
-        qdrant.add_documents([documents[i]])
-
-
-# documents = PyPDFLoader(file_path="Introduction to Algorithm .pdf").load()
-# for i in range(len(documents)):
-#     qdrant.add_documents([documents[i]])
+# NO PDF LOADING CODE HERE! 
+# The data should already be in the cloud.
