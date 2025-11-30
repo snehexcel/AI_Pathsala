@@ -20,7 +20,11 @@ except:
 # --- 2. CONFIGURE DSPY WITH GEMINI ---
 # using gemini-1.5-flash as it is most stable for free tier
 llm = dspy.LM("gemini/gemini-1.5-flash", api_key=google_api_key)
-dspy.settings.configure(lm=llm)
+try:
+    dspy.settings.configure(lm=llm)
+except RuntimeError:
+    # If it's already configured, just ignore the error
+    pass
 
 # --- 3. SIGNATURES ---
 class QuerySignature(dspy.Signature):
