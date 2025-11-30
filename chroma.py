@@ -24,7 +24,7 @@ qdrant_client = QdrantClient(
 
 # --- 3. DEFINE EMBEDDINGS (GOOGLE) ---
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/embedding-001",
+    model="models/text-embedding-004",
     google_api_key=google_api_key
 )
 
