@@ -7,3 +7,5 @@ langchain-qdrant
 qdrant-client
 python-dotenv
 pydantic
+sentence-transformers
+langchain-huggingface
