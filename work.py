@@ -5,7 +5,7 @@ import base64
 from rag import ImageQuerySignature
 import dspy 
 
-api_key = 'AFENjNYLukhJROiwg5vvNKiZyV2T1Fq5'
+api_key = '8c4a3e28-30f0-4d20-93bf-c40f85578e5c'
 client = Mistral(api_key=api_key)
 
 if "state" not in st.session_state:
