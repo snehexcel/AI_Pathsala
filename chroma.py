@@ -1,37 +1,51 @@
-import streamlit as st
-import os
 from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, VectorParams
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_qdrant import Qdrant
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.document_loaders.pdf import PyPDFLoader
+import glob
+import os
+from dotenv import load_dotenv
+load_dotenv()
+from config import QDRANT_API_KEY
 
-# --- 1. SECURE CONNECTION ---
-try:
-    qdrant_url = st.secrets["QDRANT_URL"]
-    qdrant_api_key = st.secrets["QDRANT_API_KEY"]
-    google_api_key = st.secrets["GOOGLE_API_KEY"]
-except:
-    from dotenv import load_dotenv
-    load_dotenv()
-    qdrant_url = os.getenv("QDRANT_URL")
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    google_api_key = os.getenv("GOOGLE_API_KEY")
 
-# --- 2. CONNECT TO CLIENT ---
+# client = chromadb.PersistentClient(path = "Database")
+
+# collection = client.create_collection(
+#     name="Algorithm", 
+#     embedding_function=SentenceTransformerEmbeddingFunction()
+# )
+
 qdrant_client = QdrantClient(
-    url=qdrant_url,
-    api_key=qdrant_api_key,
+    url="https://8fadb7bd-1d0c-4822-83ed-2a204d4c20a1.eu-west-2-0.aws.cloud.qdrant.io:6333", 
+    api_key=QDRANT_API_KEY,
 )
 
-# --- 3. DEFINE EMBEDDINGS (GOOGLE) ---
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/text-embedding-004",
-    google_api_key=google_api_key
+qdrant_client.recreate_collection(
+    collection_name="Content",
+    vectors_config=VectorParams(size=384, distance=Distance.COSINE),  # 384 is correct for MiniLM-L6-v2
 )
 
-# --- 4. CONNECT TO VECTOR STORE ---
-# Ensure "vector_db_data" matches your actual Qdrant Cloud collection name!
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+# Add to Qdrant
 qdrant = Qdrant(
     client=qdrant_client,
-    collection_name="vector_db_data", 
+    collection_name="Content",  # Match the created collection (table) name 
     embeddings=embeddings,
 )
+
+pdf_files = glob.glob("PDFs/*.pdf")
+
+for pdf_file in pdf_files:
+    documents = PyPDFLoader(file_path=pdf_file).load()
+    for i in range(len(documents)):
+        qdrant.add_documents([documents[i]])
+
+
+# documents = PyPDFLoader(file_path="Introduction to Algorithm .pdf").load()
+# for i in range(len(documents)):
+#     qdrant.add_documents([documents[i]])
