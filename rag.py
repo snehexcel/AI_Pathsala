@@ -1,36 +1,16 @@
 import dspy 
-import streamlit as st
-import os
 from pydantic import BaseModel, Field
+from chroma import qdrant
+import os
+from config import GOOGLE_API_KEY
 
-# IMPORT QDRANT FROM YOUR OTHER FILE
-# Make sure your other file is named 'chroma.py' and it has the 'qdrant' variable!
-from chroma import qdrant 
+llm = dspy.LM("gemini/gemini-2.0-flash", api_key=GOOGLE_API_KEY)
 
-# --- 1. SECURE KEY HANDLING ---
-try:
-    # Try getting key from Streamlit Cloud Secrets
-    google_api_key = st.secrets["GOOGLE_API_KEY"]
-except:
-    # Fallback to local .env
-    from dotenv import load_dotenv
-    load_dotenv()
-    google_api_key = os.getenv("GOOGLE_API_KEY")
+dspy.settings.configure(lm = llm)
 
-# --- 2. CONFIGURE DSPY WITH GEMINI ---
-# using gemini-1.5-flash as it is most stable for free tier
-llm = dspy.LM("gemini/gemini-1.5-flash", api_key=google_api_key)
-try:
-    dspy.settings.configure(lm=llm)
-except RuntimeError:
-    # If it's already configured, just ignore the error
-    pass
-
-# --- 3. SIGNATURES ---
 class QuerySignature(dspy.Signature):
     '''
-    Provide complete and to-the-point answers to student queries regarding their subjects, 
-    including both theoretical questions and numerical problems, using content from textbooks.
+    Provide complete and to-the-point answers to student queries regarding their subjects, including both theoretical questions and numerical problems, using content from textbooks.
     *You are great in mathematics so show proper steps to solve numericals*
     '''
     context = dspy.InputField(desc="may contain relevant facts from textbooks")
@@ -55,45 +35,31 @@ class QuizSignature(dspy.Signature):
     output: QuizOutput = dspy.OutputField()
 
 
-# --- 4. MODULES ---
 class ChatbotRAG(dspy.Module):
     def __init__(self):
         super().__init__()
         self.generate_answer = dspy.ChainOfThought(signature=QuerySignature)
 
     def forward(self, question):
-        # 1. Search Qdrant
-        results = qdrant.similarity_search(
+        context = qdrant.search(
             query=question,
-            k=4 
+            search_type="similarity_score_threshold"  
         )
-        
-        # 2. Convert LangChain Docs to String for DSPy
-        # DSPy crashes if you give it raw Document objects
-        context_text = "\n\n".join([doc.page_content for doc in results])
-        
-        # 3. Generate Answer
-        prediction = self.generate_answer(context=context_text, question=question)
-        return dspy.Prediction(context=results, answer=prediction.answer)
+        prediction = self.generate_answer(context = context, question=question)
+        return dspy.Prediction(context=context, answer=prediction.answer)
 
 class QuizRAG(dspy.Module):
     def __init__(self):
         super().__init__() 
         self.generate_quiz = dspy.ChainOfThought(QuizSignature)
-
     def forward(self, quiz_text):
-        # 1. Search Qdrant
-        results = qdrant.similarity_search(
+        context = qdrant.search(
             query=quiz_text,
-            k=4
+            search_type="similarity_score_threshold"
         )
-        
-        # 2. Extract text list for Pydantic
-        context_text = [doc.page_content for doc in results]
-        
-        # 3. Create Input Object
+        context_text = []
+        for doc in context:
+            context_text.append(str(doc.page_content))
         quiz_input = QuizInput(topic=str(quiz_text), context=context_text)
-        
-        # 4. Generate Quiz
         prediction = self.generate_quiz(input=quiz_input)
         return prediction
