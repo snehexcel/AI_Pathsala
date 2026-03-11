@@ -20,7 +20,7 @@ from config import QDRANT_API_KEY
 # )
 
 qdrant_client = QdrantClient(
-    url="https://ebb812d0-2d09-4c42-a549-13a7aed25337.us-east4-0.gcp.cloud.qdrant.io", 
+    url="https://39b4f402-43a8-48e4-a83c-db833960bf6c.eu-west-2-0.aws.cloud.qdrant.io", 
     api_key=QDRANT_API_KEY,
 )
 
