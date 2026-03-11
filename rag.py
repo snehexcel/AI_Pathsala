@@ -6,7 +6,7 @@ from config import MISTRAL_API_KEY
 # from config import GOOGLE_API_KEY
 
 # llm = dspy.LM("gemini/gemini-2.0-flash", api_key=GOOGLE_API_KEY)
-llm = dspy.LM("mistral-medium-2508", api_key=MISTRAL_API_KEY)
+llm = dspy.LM("mistral-medium", api_key=MISTRAL_API_KEY)
 
 dspy.settings.configure(lm = llm)
 
