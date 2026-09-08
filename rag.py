@@ -38,8 +38,10 @@ class QuizSignature(dspy.Signature):
 
 class ChatbotRAG(dspy.Module):
     def __init__(self):
-        super().__init__()
-        self.generate_answer = dspy.ChainOfThought(signature=QuerySignature)
+        super().__init__()self.generate_answer = dspy.ChainOfThought(
+    signature=QuerySignature,
+    lm=llm
+)
 
     def forward(self, question):
         context = qdrant.search(
@@ -52,7 +54,10 @@ class ChatbotRAG(dspy.Module):
 class QuizRAG(dspy.Module):
     def __init__(self):
         super().__init__() 
-        self.generate_quiz = dspy.ChainOfThought(QuizSignature)
+       self.generate_quiz = dspy.ChainOfThought(
+    QuizSignature,
+    lm=llm
+)
     def forward(self, quiz_text):
         context = qdrant.search(
             query=quiz_text,
