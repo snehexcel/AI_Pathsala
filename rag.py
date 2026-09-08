@@ -4,12 +4,17 @@ from chroma import qdrant
 from config import MISTRAL_API_KEY
 
 
+# Mistral LLM
 llm = dspy.LM(
     model="mistral-medium-latest",
     api_key=MISTRAL_API_KEY,
     api_base="https://api.mistral.ai/v1"
 )
 
+
+# =========================
+# CHATBOT
+# =========================
 
 class QuerySignature(dspy.Signature):
     """
@@ -19,63 +24,44 @@ class QuerySignature(dspy.Signature):
 
     You are great in mathematics, so show proper steps to solve numericals.
     """
-    context = dspy.InputField(desc="may contain relevant facts from textbooks")
+
+    context = dspy.InputField(
+        desc="Relevant facts from textbooks"
+    )
+
     question: str = dspy.InputField(
         desc="Student's question, either theoretical or numerical"
     )
+
     answer: str = dspy.OutputField(
         desc="Complete and to-the-point answer"
     )
 
 
-class QuizInput(BaseModel):
-    topic: str = Field(description="The topic for the quiz")
-    context: list[str] = Field(
-        description="Relevant context from ChromaDB"
-    )
-
-
-class QuizOption(BaseModel):
-    option: str = Field(description="A possible answer option")
-
-
-class QuizOutput(BaseModel):
-    question: str = Field(description="The generated quiz question")
-    options: list[QuizOption] = Field(
-        description="The list of answer options"
-    )
-    correct_option: int = Field(
-        ge=0,
-        le=3,
-        description="The index of the correct answer option"
-    )
-
-
-class QuizSignature(dspy.Signature):
-    """Generate a quiz question on a user-provided topic with 4 answer options."""
-    input: QuizInput = dspy.InputField()
-    output: QuizOutput = dspy.OutputField()
-
-
 class ChatbotRAG(dspy.Module):
+
     def __init__(self):
         super().__init__()
 
         self.generate_answer = dspy.ChainOfThought(
-            signature=QuerySignature,
-            lm=llm
+            signature=QuerySignature
         )
 
     def forward(self, question):
+
+        # Retrieve relevant content from Qdrant
         context = qdrant.search(
             query=question,
             search_type="similarity_score_threshold"
         )
 
-        prediction = self.generate_answer(
-            context=context,
-            question=question
-        )
+        # Use Mistral only for this request
+        with dspy.context(lm=llm):
+
+            prediction = self.generate_answer(
+                context=context,
+                question=question
+            )
 
         return dspy.Prediction(
             context=context,
@@ -83,33 +69,93 @@ class ChatbotRAG(dspy.Module):
         )
 
 
+# =========================
+# QUIZ
+# =========================
+
+class QuizInput(BaseModel):
+
+    topic: str = Field(
+        description="The topic for the quiz"
+    )
+
+    context: list[str] = Field(
+        description="Relevant context from Qdrant"
+    )
+
+
+class QuizOption(BaseModel):
+
+    option: str = Field(
+        description="A possible answer option"
+    )
+
+
+class QuizOutput(BaseModel):
+
+    question: str = Field(
+        description="The generated quiz question"
+    )
+
+    options: list[QuizOption] = Field(
+        description="Exactly four answer options"
+    )
+
+    correct_option: int = Field(
+        ge=0,
+        le=3,
+        description="Index of the correct answer option"
+    )
+
+
+class QuizSignature(dspy.Signature):
+
+    """
+    Generate a quiz question on a user-provided topic
+    with four answer options and identify the correct option.
+    """
+
+    input: QuizInput = dspy.InputField()
+
+    output: QuizOutput = dspy.OutputField()
+
+
 class QuizRAG(dspy.Module):
+
     def __init__(self):
         super().__init__()
 
         self.generate_quiz = dspy.ChainOfThought(
-            QuizSignature,
-            lm=llm
+            signature=QuizSignature
         )
 
     def forward(self, quiz_text):
+
+        # Retrieve relevant content from Qdrant
         context = qdrant.search(
             query=quiz_text,
             search_type="similarity_score_threshold"
         )
 
+        # Convert retrieved documents into plain text
         context_text = []
 
         for doc in context:
-            context_text.append(str(doc.page_content))
+            context_text.append(
+                str(doc.page_content)
+            )
 
+        # Create structured quiz input
         quiz_input = QuizInput(
             topic=str(quiz_text),
             context=context_text
         )
 
-        prediction = self.generate_quiz(
-            input=quiz_input
-        )
+        # Use Mistral only for this request
+        with dspy.context(lm=llm):
+
+            prediction = self.generate_quiz(
+                input=quiz_input
+            )
 
         return prediction
