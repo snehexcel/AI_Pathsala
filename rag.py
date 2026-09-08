@@ -9,9 +9,6 @@ from config import MISTRAL_API_KEY
 llm = dspy.LM(model="mistral-medium=latest", api_key=MISTRAL_API_KEY, api_base = "https://api.mistral.ai/v1")
 
 
-
-dspy.settings.configure(lm = llm)
-
 class QuerySignature(dspy.Signature):
     '''
     Provide complete and to-the-point answers to student queries regarding their subjects, including both theoretical questions and numerical problems, using content from textbooks.
