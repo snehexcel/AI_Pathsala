@@ -44,7 +44,7 @@ class ChatbotRAG(dspy.Module):
     def __init__(self):
         super().__init__()
 
-        self.generate_answer = dspy.ChainOfThought(
+        self.generate_answer = dspy.Predict(
             signature=QuerySignature
         )
 
