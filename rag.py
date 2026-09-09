@@ -6,7 +6,7 @@ from config import MISTRAL_API_KEY
 
 # Mistral LLM
 llm = dspy.LM(
-    model="mistral-medium-latest",
+    model="mistral-small-latest",
     api_key=MISTRAL_API_KEY,
     api_base="https://api.mistral.ai/v1"
 )
