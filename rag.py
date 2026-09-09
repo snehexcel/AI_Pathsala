@@ -8,7 +8,8 @@ from config import MISTRAL_API_KEY
 llm = dspy.LM(
     model="mistral-small-latest",
     api_key=MISTRAL_API_KEY,
-    api_base="https://api.mistral.ai/v1"
+    api_base="https://api.mistral.ai/v1",
+    num_retries=0
 )
 
 
