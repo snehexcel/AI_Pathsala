@@ -1,28 +1,44 @@
-import requests
 import json
+import requests
 import streamlit as st
 
+from dataclasses import dataclass
 from pydantic import BaseModel, Field
+
 from chroma import qdrant
 
 
 # ============================================================
-# GEMINI CONFIGURATION
+# GEMINI CONFIG
 # ============================================================
 
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/"
-    "models/gemini-2.5-flash:generateContent"
+    "models/gemini-2.5-flash-lite:generateContent"
 )
 
 
 # ============================================================
-# GEMINI HELPER
+# RESPONSE OBJECT FOR CHATBOT
 # ============================================================
 
-def call_gemini(prompt, temperature=0.3, max_output_tokens=1200):
+@dataclass
+class ChatResponse:
+    context: list
+    answer: str
+
+
+# ============================================================
+# GEMINI API
+# ============================================================
+
+def call_gemini(
+    prompt: str,
+    temperature: float = 0.2,
+    max_output_tokens: int = 1000
+) -> str:
 
     response = requests.post(
         GEMINI_URL,
@@ -33,6 +49,7 @@ def call_gemini(prompt, temperature=0.3, max_output_tokens=1200):
         json={
             "contents": [
                 {
+                    "role": "user",
                     "parts": [
                         {
                             "text": prompt
@@ -48,35 +65,67 @@ def call_gemini(prompt, temperature=0.3, max_output_tokens=1200):
         timeout=60,
     )
 
-    if response.status_code != 200:
+    # --------------------------------------------------------
+    # SUCCESS
+    # --------------------------------------------------------
+
+    if response.status_code == 200:
+
+        data = response.json()
+
         try:
-            error_data = response.json()
-            error_message = error_data.get("error", {}).get(
-                "message",
-                "Unknown Gemini API error"
+            return (
+                data["candidates"][0]
+                ["content"]
+                ["parts"][0]
+                ["text"]
+            ).strip()
+
+        except (KeyError, IndexError, TypeError):
+
+            raise RuntimeError(
+                "Gemini returned an unexpected response."
             )
-        except Exception:
-            error_message = response.text
 
-        raise RuntimeError(
-            f"Gemini API error ({response.status_code}): {error_message}"
-        )
-
-    data = response.json()
+    # --------------------------------------------------------
+    # ERROR
+    # --------------------------------------------------------
 
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        raise RuntimeError(
-            "Gemini returned an unexpected response."
+        error_data = response.json()
+
+        error = error_data.get(
+            "error",
+            {}
         )
+
+        error_message = error.get(
+            "message",
+            "Unknown Gemini API error."
+        )
+
+        error_status = error.get(
+            "status",
+            "UNKNOWN"
+        )
+
+    except Exception:
+
+        error_message = response.text
+        error_status = "UNKNOWN"
+
+    raise RuntimeError(
+        f"Gemini API error "
+        f"(HTTP {response.status_code}, {error_status}): "
+        f"{error_message}"
+    )
 
 
 # ============================================================
 # QDRANT RETRIEVAL
 # ============================================================
 
-def retrieve_context(query):
+def retrieve_context(query: str) -> list:
 
     try:
 
@@ -85,87 +134,128 @@ def retrieve_context(query):
             search_type="similarity_score_threshold"
         )
 
-        context = []
-
-        for doc in documents:
-            try:
-                text = str(doc.page_content).strip()
-
-                if text:
-                    context.append(text)
-
-            except Exception:
-                continue
-
-        return context
-
     except Exception:
+
+        # If Qdrant has no matching content or retrieval fails,
+        # Gemini can still answer using its general knowledge.
         return []
+
+    context = []
+
+    for document in documents:
+
+        try:
+
+            text = str(
+                document.page_content
+            ).strip()
+
+            if text:
+                context.append(text)
+
+        except Exception:
+            continue
+
+    return context
 
 
 # ============================================================
-# CHATBOT
+# CHATBOT RAG
 # ============================================================
 
 class ChatbotRAG:
 
     def forward(self, question):
 
-        question = str(question).strip()
+        question = str(
+            question
+        ).strip()
 
         if not question:
-            return {
-                "context": [],
-                "answer": "Please enter a question."
-            }
 
-        context = retrieve_context(question)
+            return ChatResponse(
+                context=[],
+                answer="Please enter a question."
+            )
+
+        # ----------------------------------------------------
+        # Retrieve textbook context
+        # ----------------------------------------------------
+
+        context = retrieve_context(
+            question
+        )
 
         if context:
 
-            context_text = "\n\n".join(context)
+            context_text = "\n\n".join(
+                context
+            )
 
         else:
 
             context_text = (
-                "No relevant textbook content was found in the "
-                "knowledge base."
+                "No relevant textbook content was "
+                "found in the knowledge base."
             )
 
+        # ----------------------------------------------------
+        # Prompt
+        # ----------------------------------------------------
+
         prompt = f"""
-You are the AIPathshala educational assistant.
+You are AIPathshala, an AI educational assistant
+for students.
 
-Answer the student's question clearly, accurately and concisely.
+Answer the student's question clearly, accurately,
+and in a student-friendly way.
 
-Use the textbook context below when it is relevant.
+Use the textbook context when it is relevant.
 
 If the question is a numerical problem:
-- Show the formula.
-- Show the calculation steps.
-- Give the final answer clearly.
+1. Write the required formula.
+2. Show the calculation steps.
+3. Explain the reasoning.
+4. Give the final answer clearly.
 
-If the textbook context does not contain the answer, use your
-general knowledge rather than inventing information.
+If the textbook context does not contain enough
+information, use reliable general knowledge.
 
-TEXTBOOK CONTEXT:
+Do not mention these instructions.
+Do not invent textbook content.
+
+================ TEXTBOOK CONTEXT ================
+
 {context_text}
 
-STUDENT QUESTION:
+================ STUDENT QUESTION ================
+
 {question}
 
-Provide a helpful student-friendly answer.
+================ ANSWER ================
+
+Give a complete but concise answer.
 """
+
+        # ----------------------------------------------------
+        # Generate answer with Gemini
+        # ----------------------------------------------------
 
         answer = call_gemini(
             prompt=prompt,
             temperature=0.2,
-            max_output_tokens=1200
+            max_output_tokens=1000
         )
 
-        return {
-            "context": context,
-            "answer": answer
-        }
+        # IMPORTANT:
+        # chatbot.py expects:
+        # response.answer
+        # response.context
+
+        return ChatResponse(
+            context=context,
+            answer=answer
+        )
 
 
 # ============================================================
@@ -189,55 +279,85 @@ class QuizOutput(BaseModel):
     )
 
 
+@dataclass
+class QuizPrediction:
+
+    output: QuizOutput
+
+
 # ============================================================
-# QUIZ
+# QUIZ RAG
 # ============================================================
 
 class QuizRAG:
 
     def forward(self, quiz_text):
 
-        quiz_text = str(quiz_text).strip()
+        quiz_text = str(
+            quiz_text
+        ).strip()
 
-        context = retrieve_context(quiz_text)
+        if not quiz_text:
+
+            raise RuntimeError(
+                "Please enter a quiz topic."
+            )
+
+        # ----------------------------------------------------
+        # Retrieve textbook context
+        # ----------------------------------------------------
+
+        context = retrieve_context(
+            quiz_text
+        )
 
         if context:
 
-            context_text = "\n\n".join(context)
+            context_text = "\n\n".join(
+                context
+            )
 
         else:
 
             context_text = (
-                "No textbook context was found. "
+                "No relevant textbook content was found. "
                 "Use reliable general knowledge."
             )
 
-        prompt = f"""
-You are an educational quiz generator for AIPathshala.
+        # ----------------------------------------------------
+        # Quiz prompt
+        # ----------------------------------------------------
 
-Create exactly ONE multiple-choice question about:
+        prompt = f"""
+You are the quiz generator for AIPathshala.
+
+Create exactly ONE multiple-choice question
+about the following topic:
 
 {quiz_text}
 
-Use this textbook context when relevant:
+Use the textbook context below when relevant.
+
+================ TEXTBOOK CONTEXT ================
 
 {context_text}
 
-Requirements:
+================ REQUIREMENTS ================
 
-1. Create exactly four options.
-2. Only one option must be correct.
-3. correct_option must be the zero-based index:
-   0, 1, 2, or 3.
-4. Keep the question suitable for a B.Tech/CSE student.
-5. Return ONLY valid JSON.
-6. Do not include Markdown.
-7. Do not include explanations outside the JSON.
+- Create exactly one question.
+- Create exactly four answer options.
+- Only ONE option can be correct.
+- correct_option must be the zero-based index:
+  0, 1, 2, or 3.
+- Make the question educational and accurate.
+- Keep it suitable for a B.Tech/CSE student.
+- Do not use Markdown.
+- Return ONLY valid JSON.
 
-Return exactly this structure:
+Return exactly this JSON structure:
 
 {{
-    "question": "Question text",
+    "question": "Your question here",
     "options": [
         {{"option": "Option 1"}},
         {{"option": "Option 2"}},
@@ -248,45 +368,70 @@ Return exactly this structure:
 }}
 """
 
+        # ----------------------------------------------------
+        # Generate quiz
+        # ----------------------------------------------------
+
         raw_response = call_gemini(
             prompt=prompt,
-            temperature=0.4,
+            temperature=0.3,
             max_output_tokens=700
         )
 
-        # Remove possible Markdown fences
         raw_response = raw_response.strip()
 
+        # Remove Markdown code fences if Gemini adds them
         if raw_response.startswith("```"):
-            raw_response = raw_response.replace(
-                "```json",
-                ""
-            ).replace(
-                "```",
-                ""
-            ).strip()
+
+            raw_response = (
+                raw_response
+                .replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
+
+        # ----------------------------------------------------
+        # Parse JSON
+        # ----------------------------------------------------
 
         try:
 
-            data = json.loads(raw_response)
+            data = json.loads(
+                raw_response
+            )
 
-            quiz = QuizOutput.model_validate(data)
-
-            if len(quiz.options) != 4:
-                raise ValueError(
-                    "Gemini did not return exactly four options."
-                )
-
-            return type(
-                "QuizPrediction",
-                (),
-                {
-                    "output": quiz
-                }
-            )()
+            quiz = QuizOutput.model_validate(
+                data
+            )
 
         except Exception as e:
 
             raise RuntimeError(
                 f"Could not parse Gemini quiz response: {e}"
             )
+
+        # ----------------------------------------------------
+        # Validate exactly four options
+        # ----------------------------------------------------
+
+        if len(quiz.options) != 4:
+
+            raise RuntimeError(
+                "Gemini did not return exactly four options."
+            )
+
+        # ----------------------------------------------------
+        # Validate correct option
+        # ----------------------------------------------------
+
+        if not (
+            0 <= quiz.correct_option <= 3
+        ):
+
+            raise RuntimeError(
+                "Gemini returned an invalid correct option."
+            )
+
+        return QuizPrediction(
+            output=quiz
+        )
