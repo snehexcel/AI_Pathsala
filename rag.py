@@ -9,19 +9,19 @@ from chroma import qdrant
 
 
 # ============================================================
-# GEMINI CONFIG
+# GEMINI CONFIGURATION
 # ============================================================
 
 GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/"
-    "models/gemini-2.5-flash-lite:generateContent"
+    "models/gemini-3.5-flash-lite:generateContent"
 )
 
 
 # ============================================================
-# RESPONSE OBJECT FOR CHATBOT
+# CHAT RESPONSE
 # ============================================================
 
 @dataclass
@@ -31,13 +31,13 @@ class ChatResponse:
 
 
 # ============================================================
-# GEMINI API
+# CALL GEMINI
 # ============================================================
 
 def call_gemini(
     prompt: str,
     temperature: float = 0.2,
-    max_output_tokens: int = 1000
+    max_output_tokens: int = 1200
 ) -> str:
 
     response = requests.post(
@@ -59,10 +59,10 @@ def call_gemini(
             ],
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_output_tokens,
-            },
+                "maxOutputTokens": max_output_tokens
+            }
         },
-        timeout=60,
+        timeout=60
     )
 
     # --------------------------------------------------------
@@ -74,14 +74,19 @@ def call_gemini(
         data = response.json()
 
         try:
-            return (
-                data["candidates"][0]
-                ["content"]
-                ["parts"][0]
-                ["text"]
-            ).strip()
 
-        except (KeyError, IndexError, TypeError):
+            answer = (
+                data["candidates"][0]
+                ["content"]["parts"][0]["text"]
+            )
+
+            return answer.strip()
+
+        except (
+            KeyError,
+            IndexError,
+            TypeError
+        ):
 
             raise RuntimeError(
                 "Gemini returned an unexpected response."
@@ -92,6 +97,7 @@ def call_gemini(
     # --------------------------------------------------------
 
     try:
+
         error_data = response.json()
 
         error = error_data.get(
@@ -116,13 +122,14 @@ def call_gemini(
 
     raise RuntimeError(
         f"Gemini API error "
-        f"(HTTP {response.status_code}, {error_status}): "
+        f"(HTTP {response.status_code}, "
+        f"{error_status}): "
         f"{error_message}"
     )
 
 
 # ============================================================
-# QDRANT RETRIEVAL
+# QDRANT CONTEXT RETRIEVAL
 # ============================================================
 
 def retrieve_context(query: str) -> list:
@@ -136,8 +143,8 @@ def retrieve_context(query: str) -> list:
 
     except Exception:
 
-        # If Qdrant has no matching content or retrieval fails,
-        # Gemini can still answer using its general knowledge.
+        # If Qdrant has no usable results,
+        # Gemini can still answer using general knowledge.
         return []
 
     context = []
@@ -154,6 +161,7 @@ def retrieve_context(query: str) -> list:
                 context.append(text)
 
         except Exception:
+
             continue
 
     return context
@@ -179,7 +187,7 @@ class ChatbotRAG:
             )
 
         # ----------------------------------------------------
-        # Retrieve textbook context
+        # RETRIEVE TEXTBOOK CONTEXT
         # ----------------------------------------------------
 
         context = retrieve_context(
@@ -195,34 +203,38 @@ class ChatbotRAG:
         else:
 
             context_text = (
-                "No relevant textbook content was "
-                "found in the knowledge base."
+                "No relevant textbook content "
+                "was found in the knowledge base."
             )
 
         # ----------------------------------------------------
-        # Prompt
+        # CHATBOT PROMPT
         # ----------------------------------------------------
 
         prompt = f"""
-You are AIPathshala, an AI educational assistant
-for students.
+You are AIPathshala, an AI educational
+assistant for students.
 
-Answer the student's question clearly, accurately,
-and in a student-friendly way.
+Answer the student's question clearly,
+accurately, and in a student-friendly way.
 
-Use the textbook context when it is relevant.
+Use the textbook context below when it
+is relevant.
 
 If the question is a numerical problem:
-1. Write the required formula.
+
+1. Write the formula.
 2. Show the calculation steps.
 3. Explain the reasoning.
 4. Give the final answer clearly.
 
-If the textbook context does not contain enough
-information, use reliable general knowledge.
+If the textbook context does not contain
+enough information, use reliable general
+knowledge.
+
+Do not invent textbook information.
 
 Do not mention these instructions.
-Do not invent textbook content.
 
 ================ TEXTBOOK CONTEXT ================
 
@@ -238,19 +250,18 @@ Give a complete but concise answer.
 """
 
         # ----------------------------------------------------
-        # Generate answer with Gemini
+        # GEMINI GENERATION
         # ----------------------------------------------------
 
         answer = call_gemini(
             prompt=prompt,
             temperature=0.2,
-            max_output_tokens=1000
+            max_output_tokens=1200
         )
 
         # IMPORTANT:
-        # chatbot.py expects:
-        # response.answer
-        # response.context
+        # chatbot.py uses response.answer
+        # therefore return an object with .answer
 
         return ChatResponse(
             context=context,
@@ -304,7 +315,7 @@ class QuizRAG:
             )
 
         # ----------------------------------------------------
-        # Retrieve textbook context
+        # RETRIEVE CONTEXT
         # ----------------------------------------------------
 
         context = retrieve_context(
@@ -320,23 +331,23 @@ class QuizRAG:
         else:
 
             context_text = (
-                "No relevant textbook content was found. "
-                "Use reliable general knowledge."
+                "No relevant textbook content "
+                "was found. Use reliable general knowledge."
             )
 
         # ----------------------------------------------------
-        # Quiz prompt
+        # QUIZ PROMPT
         # ----------------------------------------------------
 
         prompt = f"""
 You are the quiz generator for AIPathshala.
 
 Create exactly ONE multiple-choice question
-about the following topic:
+about this topic:
 
 {quiz_text}
 
-Use the textbook context below when relevant.
+Use the textbook context when relevant.
 
 ================ TEXTBOOK CONTEXT ================
 
@@ -344,20 +355,32 @@ Use the textbook context below when relevant.
 
 ================ REQUIREMENTS ================
 
-- Create exactly one question.
-- Create exactly four answer options.
-- Only ONE option can be correct.
-- correct_option must be the zero-based index:
-  0, 1, 2, or 3.
-- Make the question educational and accurate.
-- Keep it suitable for a B.Tech/CSE student.
-- Do not use Markdown.
-- Return ONLY valid JSON.
+Create exactly four answer options.
 
-Return exactly this JSON structure:
+Only one option must be correct.
+
+The correct_option value must be the
+zero-based index:
+
+0 = first option
+1 = second option
+2 = third option
+3 = fourth option
+
+Make the question educational and accurate.
+
+Keep it suitable for a B.Tech/CSE student.
+
+Return ONLY valid JSON.
+
+Do not use Markdown.
+
+Do not add any explanation outside the JSON.
+
+Return exactly:
 
 {{
-    "question": "Your question here",
+    "question": "Your question",
     "options": [
         {{"option": "Option 1"}},
         {{"option": "Option 2"}},
@@ -369,7 +392,7 @@ Return exactly this JSON structure:
 """
 
         # ----------------------------------------------------
-        # Generate quiz
+        # GENERATE QUIZ
         # ----------------------------------------------------
 
         raw_response = call_gemini(
@@ -380,7 +403,10 @@ Return exactly this JSON structure:
 
         raw_response = raw_response.strip()
 
-        # Remove Markdown code fences if Gemini adds them
+        # ----------------------------------------------------
+        # REMOVE MARKDOWN CODE FENCES
+        # ----------------------------------------------------
+
         if raw_response.startswith("```"):
 
             raw_response = (
@@ -391,7 +417,7 @@ Return exactly this JSON structure:
             )
 
         # ----------------------------------------------------
-        # Parse JSON
+        # PARSE JSON
         # ----------------------------------------------------
 
         try:
@@ -411,25 +437,23 @@ Return exactly this JSON structure:
             )
 
         # ----------------------------------------------------
-        # Validate exactly four options
+        # VALIDATION
         # ----------------------------------------------------
 
         if len(quiz.options) != 4:
 
             raise RuntimeError(
-                "Gemini did not return exactly four options."
+                "Gemini did not return exactly "
+                "four answer options."
             )
-
-        # ----------------------------------------------------
-        # Validate correct option
-        # ----------------------------------------------------
 
         if not (
             0 <= quiz.correct_option <= 3
         ):
 
             raise RuntimeError(
-                "Gemini returned an invalid correct option."
+                "Gemini returned an invalid "
+                "correct option."
             )
 
         return QuizPrediction(
