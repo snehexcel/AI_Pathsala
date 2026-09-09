@@ -1,162 +1,292 @@
-import dspy
+import requests
+import json
+import streamlit as st
+
 from pydantic import BaseModel, Field
 from chroma import qdrant
-from config import MISTRAL_API_KEY
 
 
-# Mistral LLM
-llm = dspy.LM(
-    model="mistral-small-latest",
-    api_key=MISTRAL_API_KEY,
-    api_base="https://api.mistral.ai/v1",
-    num_retries=0
+# ============================================================
+# GEMINI CONFIGURATION
+# ============================================================
+
+GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/"
+    "models/gemini-2.5-flash:generateContent"
 )
 
 
-# =========================
-# CHATBOT
-# =========================
+# ============================================================
+# GEMINI HELPER
+# ============================================================
 
-class QuerySignature(dspy.Signature):
-    """
-    Provide complete and to-the-point answers to student queries regarding
-    their subjects, including both theoretical questions and numerical
-    problems, using content from textbooks.
+def call_gemini(prompt, temperature=0.3, max_output_tokens=1200):
 
-    You are great in mathematics, so show proper steps to solve numericals.
-    """
-
-    context = dspy.InputField(
-        desc="Relevant facts from textbooks"
+    response = requests.post(
+        GEMINI_URL,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": GOOGLE_API_KEY,
+        },
+        json={
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_output_tokens,
+            },
+        },
+        timeout=60,
     )
 
-    question: str = dspy.InputField(
-        desc="Student's question, either theoretical or numerical"
-    )
+    if response.status_code != 200:
+        try:
+            error_data = response.json()
+            error_message = error_data.get("error", {}).get(
+                "message",
+                "Unknown Gemini API error"
+            )
+        except Exception:
+            error_message = response.text
 
-    answer: str = dspy.OutputField(
-        desc="Complete and to-the-point answer"
-    )
-
-
-class ChatbotRAG(dspy.Module):
-
-    def __init__(self):
-        super().__init__()
-
-        self.generate_answer = dspy.Predict(
-            signature=QuerySignature
+        raise RuntimeError(
+            f"Gemini API error ({response.status_code}): {error_message}"
         )
 
-    def forward(self, question):
+    data = response.json()
 
-        # Retrieve relevant content from Qdrant
-        context = qdrant.search(
-            query=question,
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise RuntimeError(
+            "Gemini returned an unexpected response."
+        )
+
+
+# ============================================================
+# QDRANT RETRIEVAL
+# ============================================================
+
+def retrieve_context(query):
+
+    try:
+
+        documents = qdrant.search(
+            query=query,
             search_type="similarity_score_threshold"
         )
 
-        # Use Mistral only for this request
-        with dspy.context(lm=llm):
+        context = []
 
-            prediction = self.generate_answer(
-                context=context,
-                question=question
+        for doc in documents:
+            try:
+                text = str(doc.page_content).strip()
+
+                if text:
+                    context.append(text)
+
+            except Exception:
+                continue
+
+        return context
+
+    except Exception:
+        return []
+
+
+# ============================================================
+# CHATBOT
+# ============================================================
+
+class ChatbotRAG:
+
+    def forward(self, question):
+
+        question = str(question).strip()
+
+        if not question:
+            return {
+                "context": [],
+                "answer": "Please enter a question."
+            }
+
+        context = retrieve_context(question)
+
+        if context:
+
+            context_text = "\n\n".join(context)
+
+        else:
+
+            context_text = (
+                "No relevant textbook content was found in the "
+                "knowledge base."
             )
 
-        return dspy.Prediction(
-            context=context,
-            answer=prediction.answer
+        prompt = f"""
+You are the AIPathshala educational assistant.
+
+Answer the student's question clearly, accurately and concisely.
+
+Use the textbook context below when it is relevant.
+
+If the question is a numerical problem:
+- Show the formula.
+- Show the calculation steps.
+- Give the final answer clearly.
+
+If the textbook context does not contain the answer, use your
+general knowledge rather than inventing information.
+
+TEXTBOOK CONTEXT:
+{context_text}
+
+STUDENT QUESTION:
+{question}
+
+Provide a helpful student-friendly answer.
+"""
+
+        answer = call_gemini(
+            prompt=prompt,
+            temperature=0.2,
+            max_output_tokens=1200
         )
 
+        return {
+            "context": context,
+            "answer": answer
+        }
 
-# =========================
-# QUIZ
-# =========================
 
-class QuizInput(BaseModel):
-
-    topic: str = Field(
-        description="The topic for the quiz"
-    )
-
-    context: list[str] = Field(
-        description="Relevant context from Qdrant"
-    )
-
+# ============================================================
+# QUIZ MODELS
+# ============================================================
 
 class QuizOption(BaseModel):
 
-    option: str = Field(
-        description="A possible answer option"
-    )
+    option: str
 
 
 class QuizOutput(BaseModel):
 
-    question: str = Field(
-        description="The generated quiz question"
-    )
+    question: str
 
-    options: list[QuizOption] = Field(
-        description="Exactly four answer options"
-    )
+    options: list[QuizOption]
 
     correct_option: int = Field(
         ge=0,
-        le=3,
-        description="Index of the correct answer option"
+        le=3
     )
 
 
-class QuizSignature(dspy.Signature):
+# ============================================================
+# QUIZ
+# ============================================================
 
-    """
-    Generate a quiz question on a user-provided topic
-    with four answer options and identify the correct option.
-    """
-
-    input: QuizInput = dspy.InputField()
-
-    output: QuizOutput = dspy.OutputField()
-
-
-class QuizRAG(dspy.Module):
-
-    def __init__(self):
-        super().__init__()
-
-        self.generate_quiz = dspy.ChainOfThought(
-            signature=QuizSignature
-        )
+class QuizRAG:
 
     def forward(self, quiz_text):
 
-        # Retrieve relevant content from Qdrant
-        context = qdrant.search(
-            query=quiz_text,
-            search_type="similarity_score_threshold"
-        )
+        quiz_text = str(quiz_text).strip()
 
-        # Convert retrieved documents into plain text
-        context_text = []
+        context = retrieve_context(quiz_text)
 
-        for doc in context:
-            context_text.append(
-                str(doc.page_content)
+        if context:
+
+            context_text = "\n\n".join(context)
+
+        else:
+
+            context_text = (
+                "No textbook context was found. "
+                "Use reliable general knowledge."
             )
 
-        # Create structured quiz input
-        quiz_input = QuizInput(
-            topic=str(quiz_text),
-            context=context_text
+        prompt = f"""
+You are an educational quiz generator for AIPathshala.
+
+Create exactly ONE multiple-choice question about:
+
+{quiz_text}
+
+Use this textbook context when relevant:
+
+{context_text}
+
+Requirements:
+
+1. Create exactly four options.
+2. Only one option must be correct.
+3. correct_option must be the zero-based index:
+   0, 1, 2, or 3.
+4. Keep the question suitable for a B.Tech/CSE student.
+5. Return ONLY valid JSON.
+6. Do not include Markdown.
+7. Do not include explanations outside the JSON.
+
+Return exactly this structure:
+
+{{
+    "question": "Question text",
+    "options": [
+        {{"option": "Option 1"}},
+        {{"option": "Option 2"}},
+        {{"option": "Option 3"}},
+        {{"option": "Option 4"}}
+    ],
+    "correct_option": 0
+}}
+"""
+
+        raw_response = call_gemini(
+            prompt=prompt,
+            temperature=0.4,
+            max_output_tokens=700
         )
 
-        # Use Mistral only for this request
-        with dspy.context(lm=llm):
+        # Remove possible Markdown fences
+        raw_response = raw_response.strip()
 
-            prediction = self.generate_quiz(
-                input=quiz_input
+        if raw_response.startswith("```"):
+            raw_response = raw_response.replace(
+                "```json",
+                ""
+            ).replace(
+                "```",
+                ""
+            ).strip()
+
+        try:
+
+            data = json.loads(raw_response)
+
+            quiz = QuizOutput.model_validate(data)
+
+            if len(quiz.options) != 4:
+                raise ValueError(
+                    "Gemini did not return exactly four options."
+                )
+
+            return type(
+                "QuizPrediction",
+                (),
+                {
+                    "output": quiz
+                }
+            )()
+
+        except Exception as e:
+
+            raise RuntimeError(
+                f"Could not parse Gemini quiz response: {e}"
             )
-
-        return prediction
