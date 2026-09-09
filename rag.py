@@ -12,7 +12,14 @@ from chroma import qdrant
 # GEMINI CONFIGURATION
 # ============================================================
 
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"].strip()
+
+# TEMPORARY DIAGNOSTIC
+# Shows only the last 4 characters of the loaded key.
+# Never exposes the complete API key.
+st.sidebar.caption(
+    f"Gemini key loaded: ****{GOOGLE_API_KEY[-4:]}"
+)
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/"
@@ -65,9 +72,9 @@ def call_gemini(
         timeout=60
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # SUCCESS
-    # --------------------------------------------------------
+    # ========================================================
 
     if response.status_code == 200:
 
@@ -92,9 +99,9 @@ def call_gemini(
                 "Gemini returned an unexpected response."
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # ERROR
-    # --------------------------------------------------------
+    # ========================================================
 
     try:
 
@@ -143,8 +150,6 @@ def retrieve_context(query: str) -> list:
 
     except Exception:
 
-        # If Qdrant has no usable results,
-        # Gemini can still answer using general knowledge.
         return []
 
     context = []
@@ -259,10 +264,6 @@ Give a complete but concise answer.
             max_output_tokens=1200
         )
 
-        # IMPORTANT:
-        # chatbot.py uses response.answer
-        # therefore return an object with .answer
-
         return ChatResponse(
             context=context,
             answer=answer
@@ -274,7 +275,6 @@ Give a complete but concise answer.
 # ============================================================
 
 class QuizOption(BaseModel):
-
     option: str
 
 
@@ -292,7 +292,6 @@ class QuizOutput(BaseModel):
 
 @dataclass
 class QuizPrediction:
-
     output: QuizOutput
 
 
